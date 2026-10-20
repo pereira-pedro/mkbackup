@@ -1,6 +1,6 @@
 # Public GitHub publication
 
-The current private repository's history contains the legacy plaintext FTP
+The original private source repository's history contains the legacy plaintext FTP
 credential database `virtusers.txt`. Deleting it from the working tree does not
 remove old commits. **Do not push this repository's existing branches or tags to
 a public remote.** Rotate those historical credentials wherever they were reused.

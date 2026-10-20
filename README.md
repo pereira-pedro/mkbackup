@@ -1,7 +1,8 @@
 # mkbackup: MikroTik deployment and backups
 
 Self-hosted backup enrollment, collection and browser administration for MikroTik
-routers. Licensed under [MIT](LICENSE). See [contributing](CONTRIBUTING.md) for
+routers. Public repository: [pereira-pedro/mkbackup](https://github.com/pereira-pedro/mkbackup).
+Licensed under [MIT](LICENSE). See [contributing](CONTRIBUTING.md) for
 development and [security](SECURITY.md) for deployment boundaries and reporting.
 
 ## Quick start

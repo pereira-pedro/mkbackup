@@ -426,6 +426,8 @@ class IntegrationTests(unittest.TestCase):
         client = ftplib.FTP()
 
         def close():
+            if client.sock is None:
+                return
             try:
                 client.quit()
             except (ftplib.Error, OSError, EOFError):

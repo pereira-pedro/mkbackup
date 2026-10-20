@@ -445,6 +445,7 @@ class IntegrationTests(unittest.TestCase):
 import platform
 found=False
 for proc in Path('/proc').iterdir():
+ if not proc.name.isdigit(): continue
  try:
   status=dict(line.split(':',1) for line in (proc/'status').read_text().splitlines() if ':' in line)
   if status.get('Name','').strip()=='vsftpd' and status.get('Uid','').split()[0]=='10002':

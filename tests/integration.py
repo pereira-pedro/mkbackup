@@ -424,9 +424,20 @@ class IntegrationTests(unittest.TestCase):
 
     def ftp(self, user="legacy", password=None):
         client = ftplib.FTP()
-        self.addCleanup(client.close)
-        client.connect("127.0.0.1", self.ftp_port, timeout=5)
-        client.login(user, self.password if password is None else password)
+
+        def close():
+            try:
+                client.quit()
+            except (ftplib.Error, OSError, EOFError):
+                client.close()
+
+        try:
+            client.connect("127.0.0.1", self.ftp_port, timeout=5)
+            client.login(user, self.password if password is None else password)
+        except BaseException:
+            client.close()
+            raise
+        self.addCleanup(close)
         return client
 
     def test_07_ftp_credentials_isolation_and_destructive_commands_denied(self):

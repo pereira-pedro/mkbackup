@@ -184,7 +184,10 @@ or container-host compromise. Keep CPU/memory/PID limits and rotated logs enable
 Secrets are read-only runtime mounts; generated account databases and copied
 host keys live on bounded tmpfs. `.dockerignore` admits only runtime source and
 public configuration, excluding `.git`, `.env`, router keys, bundles and tests.
-Rebuild with `--pull` regularly for Ubuntu/OpenSSH updates.
+Rebuild with `--pull` regularly for Ubuntu/OpenSSH updates. The image rebuilds
+Ubuntu’s vsftpd source package with [two narrow seccomp fixes](patches/vsftpd-seccomp.patch);
+compiler dependencies remain in a separate build stage. Keep the source patch
+reviewed as Ubuntu updates the package.
 
 ## 5. RouterOS rollout: capability-gated, never weaken SSH
 

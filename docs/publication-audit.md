@@ -72,3 +72,11 @@ One-time migration imports stable identities, existing hashes and enrollment
 state; imported accounts cannot be reissued through the UI. Delivery flags and
 reissue checks share transactional SQLite state. The public source export was
 regenerated after this change; use the latest export for GitHub publication.
+
+Native GitHub x86-64 validation additionally found two missing vsftpd seccomp
+rules. `patches/vsftpd-seccomp.patch` adds only the demonstrated passive-socket
+option and relative-sleep operation. The Docker build uses Ubuntu's authenticated
+source package and package build flags, then copies its packaged binary into the
+runtime image. The sandbox is not disabled; no extra runtime capability is added.
+The source patch must be reviewed/refreshed if a future Ubuntu update changes its
+context. Third-party vsftpd source retains its distribution license.

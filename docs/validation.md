@@ -134,3 +134,17 @@ TLS integration test enrolls v6/v7 routers through the admin form, replaces an
 unused token, rejects reissue after delivery, archives both transports' uploads,
 and confirms receipt/checksum data. FTP and SFTP handles remain open throughout;
 their bytes finish intact and listener/container identities remain unchanged.
+
+## Native x86-64 FTP sandbox follow-up
+
+The first hosted Ubuntu x86-64 integration run exposed an existing vsftpd BPF
+compatibility issue that the ARM development host did not exercise. A payload-free
+syscall trace identified `setsockopt(SOL_SOCKET, SO_REUSEADDR)` during passive
+listener setup and glibc's relative `clock_nanosleep` during failed-login delay.
+The image rebuilds Ubuntu's authenticated source package with a narrow patch:
+permit passive `SO_REUSEADDR` and relative realtime sleeps, preserving the
+seccomp filter and distribution hardening flags. Build tools stay in a separate
+Docker stage. Tests require a proper 530 response for bad passwords, deny active
+FTP commands, and verify that native x86-64 authenticated workers carry both
+Docker and vsftpd filters. The upstream vsftpd application filter is x86-64-only;
+Docker's host seccomp remains enabled on ARM as well.

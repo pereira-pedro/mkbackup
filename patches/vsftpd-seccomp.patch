@@ -1,0 +1,28 @@
+--- a/seccompsandbox.c
++++ b/seccompsandbox.c
+@@ -26,6 +26,7 @@
+ #include <sys/mman.h>
+ #include <sys/prctl.h>
+ #include <sys/socket.h>
++#include <time.h>
+ #include <sys/types.h>
+ 
+ #include <linux/filter.h>
+@@ -288,6 +289,8 @@
+   }
+   if (tunable_pasv_enable)
+   {
++    /* Passive listeners also set SO_REUSEADDR on Ubuntu. */
++    allow_nr_2_arg_match(__NR_setsockopt, 2, SOL_SOCKET, 3, SO_REUSEADDR);
+     allow_nr(__NR_listen);
+     allow_nr(__NR_accept);
+   }
+@@ -341,6 +344,8 @@
+ 
+   /* Misc simple low-risk calls */
+   allow_nr(__NR_nanosleep); /* Used for bandwidth / login throttling. */
++  /* glibc implements relative nanosleep through this syscall. */
++  allow_nr_2_arg_match(__NR_clock_nanosleep, 1, CLOCK_REALTIME, 2, 0);
+   allow_nr(__NR_getpid); /* Used by logging. */
+   allow_nr(__NR_shutdown); /* Used for QUIT or a timeout. */
+   allow_nr_1_arg_match(__NR_fcntl, 2, F_GETFL);

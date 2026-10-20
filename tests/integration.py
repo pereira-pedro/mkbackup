@@ -430,13 +430,36 @@ class IntegrationTests(unittest.TestCase):
         return client
 
     def test_07_ftp_credentials_isolation_and_destructive_commands_denied(self):
-        with self.assertRaises(ftplib.error_perm):
+        with self.assertRaises(ftplib.error_perm) as bad_password:
             self.ftp(password="invalid")
+        self.assertTrue(
+            str(bad_password.exception).startswith("530"),
+            "Bad passwords must fail authentication, not crash the sandbox",
+        )
         with self.assertRaises(ftplib.error_perm):
             self.ftp(user="alice")  # SFTP identities cannot log in over FTP.
         client = self.ftp()
+        self.exec_python(
+            "ftp",
+            """from pathlib import Path
+import platform
+found=False
+for proc in Path('/proc').iterdir():
+ try:
+  status=dict(line.split(':',1) for line in (proc/'status').read_text().splitlines() if ':' in line)
+  if status.get('Name','').strip()=='vsftpd' and status.get('Uid','').split()[0]=='10002':
+   found=True
+   assert status['Seccomp'].strip()=='2'
+   if platform.machine()=='x86_64': assert int(status['Seccomp_filters'])>=2
+ except FileNotFoundError:
+  pass
+assert found, 'No authenticated FTP worker found'
+""",
+        )
         client.storbinary("STOR /upload/pending.rsc", io.BytesIO(b"private"))
         for command in (
+            "PORT 127,0,0,1,7,138",
+            "EPRT |1|127.0.0.1|1930|",
             "RETR /upload/pending.rsc",
             "DELE /upload/pending.rsc",
             "RNFR /upload/pending.rsc",

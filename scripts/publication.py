@@ -34,6 +34,7 @@ ROOT_FILES = (
     "vsftpd-mkbackup.conf",
 )
 PATTERNS = (
+    "patches/*.patch",
     "container/*.py",
     "container/pam-ftp",
     "scripts/*.py",

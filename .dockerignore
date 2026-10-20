@@ -10,3 +10,6 @@
 !mikrotik/
 !mikrotik/*.rsc
 !mikrotik/*.rsc.in
+
+!patches/
+!patches/*.patch

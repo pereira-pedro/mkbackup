@@ -1,0 +1,49 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+http://:15102 {
+	# HAProxy terminates public HTTPS. Restrict this HTTP listener to that proxy.
+	# No access logging: request headers can contain enrollment/status credentials.
+	@unknown_host `!host("{$DEPLOYMENT_HOST:mkbackup.example.com}") && !host("localhost", "127.0.0.1")`
+	# Open the console locally, while preserving authenticated installer downloads
+	# from GET / and the public deployment hostname's existing root behavior.
+	@local_console_root {
+		host localhost 127.0.0.1
+		path /
+		method GET
+		not header Authorization *
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Cache-Control "no-store, private"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+	}
+	@admin_console path /admin /admin/*
+	# Keep the host guard ahead of every proxy handler, regardless of Caddy's
+	# normal directive sorting.
+	route {
+		respond @unknown_host "Hostname is not configured for mkbackup." 421
+		redir @local_console_root /admin/ 303
+		handle @admin_console {
+			request_body {
+				max_size 4KB
+			}
+			reverse_proxy admin:8080 {
+				header_up X-Forwarded-Proto https
+			}
+		}
+		handle {
+			request_body {
+				max_size 1KB
+			}
+			reverse_proxy enrollment:8080 {
+				# This backend exclusively serves the HTTPS origin behind HAProxy.
+				header_up X-Forwarded-Proto https
+			}
+		}
+	}
+}

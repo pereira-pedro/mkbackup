@@ -1,0 +1,53 @@
+# Native RouterOS test: insert mikrotik/timestamp.rsc at the placeholder below,
+# transfer to a disposable router, then /import the resulting file.
+{
+    @TIMESTAMP_HELPER@
+    :local valid {
+        "jan/02/2026|03:04:05|20260102030405";
+        "feb/28/2026|23:59:59|20260228235959";
+        "mar/01/2026|00:00:00|20260301000000";
+        "apr/30/2026|12:34:56|20260430123456";
+        "may/31/2026|01:02:03|20260531010203";
+        "jun/30/2026|09:08:07|20260630090807";
+        "jul/31/2026|10:11:12|20260731101112";
+        "aug/31/2026|13:14:15|20260831131415";
+        "sep/30/2026|16:17:18|20260930161718";
+        "oct/20/2026|03:05:09|20261020030509";
+        "nov/30/2026|19:20:21|20261130192021";
+        "dec/31/2026|23:59:59|20261231235959";
+        "2027-01-01|00:00:00|20270101000000";
+        "2024-02-29|03:04:05|20240229030405";
+        "feb/29/2000|00:00:00|20000229000000"
+    }
+    :foreach item in=$valid do={
+        :local first [:find $item "|"]
+        :local second [:find $item "|" $first]
+        :local actual [$formatTimestamp [:pick $item 0 $first] [:pick $item ($first + 1) $second]]
+        :if ($actual != [:pick $item ($second + 1) [:len $item]]) do={ :error ("timestamp mismatch: " . $item) }
+    }
+    :local invalid {
+        "jan/02/1970|00:00:00";
+        "feb/29/2026|00:00:00";
+        "2100-02-29|00:00:00";
+        "2026-04-31|00:00:00";
+        "2026-00-01|00:00:00";
+        "2026-13-01|00:00:00";
+        "2026-01-00|00:00:00";
+        "zzz/01/2026|00:00:00";
+        "2026-1-01|00:00:00";
+        "2026-01-01|24:00:00";
+        "2026-01-01|00:60:00";
+        "2026-01-01|00:00:60";
+        "2026-01-01|0:00:00";
+        "2026-01-aa|00:00:00"
+    }
+    :foreach item in=$invalid do={
+        :local first [:find $item "|"]
+        :local rejected false
+        :do {
+            :local actual [$formatTimestamp [:pick $item 0 $first] [:pick $item ($first + 1) [:len $item]]]
+        } on-error={ :set rejected true }
+        :if (!$rejected) do={ :error ("invalid timestamp accepted: " . $item) }
+    }
+    :put "TIMESTAMP_CHECKS_PASSED: 15 valid and 14 invalid clock inputs"
+}

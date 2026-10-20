@@ -1,0 +1,12 @@
+title = "mkbackup publication secret scanning"
+
+[extend]
+useDefault = true
+
+# Legacy alternating username/password records evade generic token detectors.
+# Never allow this credential database back into the public repository.
+[[rules]]
+id = "legacy-ftp-credentials"
+description = "Legacy plaintext FTP credential database"
+path = '''(^|/)virtusers\.txt$'''
+regex = '''(?m)^([^\r\n]+)$'''

@@ -1,0 +1,28 @@
+# Local configuration, enrollment material and backup payloads
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite*
+*.db
+*.backup
+virtusers.txt
+
+# Publication artifacts, tooling and caches
+dist/
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

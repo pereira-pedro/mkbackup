@@ -1,0 +1,35 @@
+# Merge the ACL/use_backend and backend into your existing HAProxy configuration.
+# The frontend below illustrates TLS termination; use your existing certificate
+# management and listener rather than adding a second listener on port 443.
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 60s
+    timeout server 60s
+
+frontend public_https
+    bind :443 ssl crt /etc/haproxy/certs/mkbackup.example.com.pem ssl-min-ver TLSv1.2 alpn h2,http/1.1
+    # Authorization headers contain private enrollment/status tokens.
+    no log
+    acl host_mkbackup hdr(host),field(1,:) -i mkbackup.example.com
+    # Count submissions by the actual connection source, never X-Forwarded-For.
+    acl admin_login path,url_dec -m str /admin/login
+    http-request track-sc0 src table admin_login_limits if host_mkbackup METH_POST admin_login
+    http-request deny deny_status 429 if host_mkbackup METH_POST admin_login { sc_http_req_rate(0) gt 10 }
+    use_backend mkbackup if host_mkbackup
+
+backend admin_login_limits
+    # A string key preserves both IPv4 and IPv6 source addresses.
+    stick-table type string len 64 size 100k expire 1m store http_req_rate(1m)
+
+backend mkbackup
+    # Never retry an enrollment request after it might have consumed its token.
+    retries 0
+    http-request set-header X-Forwarded-Proto https
+    option httpchk
+    http-check send meth GET uri /healthz ver HTTP/1.1 hdr Host mkbackup.example.com
+    http-check expect status 200
+    # Same-host HAProxy. For separate hosts, use the Caddy host's private IP.
+    # If HAProxy is containerized, use a shared private Docker network or the
+    # reachable host address; 127.0.0.1 inside that container is HAProxy itself.
+    server caddy 127.0.0.1:15102 check

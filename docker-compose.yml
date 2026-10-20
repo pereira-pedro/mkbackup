@@ -1,0 +1,278 @@
+x-runtime: &runtime
+  build: .
+  image: mkbackup/app
+  init: true
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /run:rw,noexec,nosuid,nodev,size=16m,mode=0755
+    - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+  pids_limit: 128
+  mem_limit: 256m
+  cpus: 1.0
+  logging:
+    driver: local
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  provisioner:
+    <<: *runtime
+    command: [provisioner]
+    network_mode: none
+    environment:
+      DEPLOYMENT_HOST: ${DEPLOYMENT_HOST:-mkbackup.example.com}
+      ENROLLMENT_BASE_URL: ${ENROLLMENT_BASE_URL:-}
+      FTP_PUBLIC_ADDRESS: ${FTP_PUBLIC_ADDRESS:-127.0.0.1}
+      FTP_PORT: ${FTP_PORT:-15101}
+      SFTP_PORT: ${SFTP_PORT:-15100}
+    volumes:
+      - enrollment-data:/var/lib/mkbackup-enrollment
+      - router-config:/config
+      - ftp-auth-config:/ftp-config
+      - provisioning-acks:/acks:ro
+      - provisioner-admin:/control-admin
+      - provisioner-public:/control-public
+    secrets:
+      - routers
+      - ftp_passwords
+      - enrollment_key
+      - ssh_host_rsa_public_key
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETGID, SETUID]
+    healthcheck:
+      test: [CMD, python3, /usr/local/lib/mkbackup/healthcheck.py, provisioner]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  sftp:
+    <<: *runtime
+    command: [sftp]
+    environment:
+      TZ: ${APP_TIMEZONE:-UTC}
+      ROUTERS_SNAPSHOT: /config/routers.json
+    ports:
+      - "${SFTP_BIND_ADDRESS:-127.0.0.1}:${SFTP_PORT:-15100}:2222"
+    volumes:
+      - incoming-data:/srv/sftp
+      - router-config:/config:ro
+      - provisioning-acks:/acks
+    secrets:
+      - ssh_host_rsa_key
+      - ssh_host_ed25519_key
+    tmpfs:
+      - /run:rw,noexec,nosuid,nodev,size=16m,mode=0755
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+      - /var/lib/extrausers:rw,noexec,nosuid,nodev,size=2m,mode=0755
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - SYS_CHROOT
+    depends_on:
+      provisioner:
+        condition: service_healthy
+  collector:
+    <<: *runtime
+    command: [collector]
+    environment:
+      TZ: ${APP_TIMEZONE:-UTC}
+      COLLECT_INTERVAL_SECONDS: ${COLLECT_INTERVAL_SECONDS:-2}
+      RETENTION_ENABLED: ${RETENTION_ENABLED:-0}
+      ROUTERS_SNAPSHOT: /config/routers.json
+    network_mode: none
+    volumes:
+      - incoming-data:/incoming
+      # Keep the existing volume name/project name to preserve historical data.
+      - ftp-data:/archive
+      - receipt-index:/receipts
+      - router-config:/config:ro
+      - provisioning-acks:/acks
+    depends_on:
+      provisioner:
+        condition: service_healthy
+    cap_add:
+      - DAC_OVERRIDE
+      - FOWNER
+      - CHOWN
+    healthcheck:
+      test: [CMD, python3, /usr/local/lib/mkbackup/healthcheck.py, collector]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  ftp:
+    <<: *runtime
+    profiles: [legacy]
+    command: [ftp]
+    environment:
+      FTP_PUBLIC_ADDRESS: ${FTP_PUBLIC_ADDRESS:-127.0.0.1}
+      FTP_PASSIVE_MIN: ${FTP_PASSIVE_MIN:-15110}
+      FTP_PASSIVE_MAX: ${FTP_PASSIVE_MAX:-15119}
+      ROUTERS_SNAPSHOT: /config/routers.json
+      FTP_AUTH_SNAPSHOT: /ftp-config/passwords.json
+    ports:
+      - "${FTP_BIND_ADDRESS:-127.0.0.1}:${FTP_PORT:-15101}:2121"
+      - "${FTP_BIND_ADDRESS:-127.0.0.1}:${FTP_PASSIVE_MIN:-15110}-${FTP_PASSIVE_MAX:-15119}:${FTP_PASSIVE_MIN:-15110}-${FTP_PASSIVE_MAX:-15119}"
+    volumes:
+      - incoming-data:/srv/sftp
+      - router-config:/config:ro
+      - ftp-auth-config:/ftp-config:ro
+      - provisioning-acks:/acks
+    depends_on:
+      provisioner:
+        condition: service_healthy
+    tmpfs:
+      - /run:rw,noexec,nosuid,nodev,size=16m,mode=0755
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+      - /var/lib/extrausers:rw,noexec,nosuid,nodev,size=2m,mode=0755
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, SYS_CHROOT]
+    healthcheck:
+      test: [CMD, python3, /usr/local/lib/mkbackup/healthcheck.py, ftp]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  enrollment:
+    <<: *runtime
+    profiles: [deployment]
+    command: [enrollment]
+    user: "10001:10001"
+    volumes:
+      - receipt-index:/receipts:ro
+      - provisioner-public:/control-public:ro
+    depends_on:
+      provisioner:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python3, /usr/local/lib/mkbackup/healthcheck.py, enrollment]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  archive-reader:
+    <<: *runtime
+    profiles: [admin]
+    command: [archive-reader]
+    # UID 0 reads existing 0400 archives without changing ownership or modes.
+    # The shared primary GID lets the unprivileged web service use the socket.
+    user: "0:10001"
+    network_mode: none
+    volumes:
+      - ftp-data:/archive:ro
+      - archive-socket:/reader
+    depends_on:
+      collector:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python3, /usr/local/lib/mkbackup/healthcheck.py, archive-reader]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  admin:
+    <<: *runtime
+    profiles: [admin]
+    command: [admin]
+    user: "10001:10001"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    volumes:
+      - archive-socket:/reader:ro
+      - provisioner-admin:/control-admin:ro
+    tmpfs:
+      - /run:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=10001,gid=10001
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777
+    depends_on:
+      archive-reader:
+        condition: service_healthy
+      provisioner:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python3, /usr/local/lib/mkbackup/healthcheck.py, admin]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # Keep the existing service name; public TLS is now handled by HAProxy.
+  https:
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    profiles: [deployment]
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    # The upstream Caddy binary has this file capability; its bounding set must
+    # allow execution even though our HTTP listener uses an unprivileged port.
+    cap_add: [NET_BIND_SERVICE]
+    user: "10001:10001"
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    environment:
+      DEPLOYMENT_HOST: ${DEPLOYMENT_HOST:-mkbackup.example.com}
+    ports:
+      - "${CADDY_BIND_ADDRESS:-127.0.0.1}:${CADDY_PORT:-15102}:15102"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777
+      - /data:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=10001,gid=10001
+      - /config:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=10001,gid=10001
+    depends_on:
+      enrollment:
+        condition: service_healthy
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  routers:
+    file: ${ROUTERS_FILE:-./secrets/routers.json}
+  ssh_host_rsa_key:
+    file: ${SSH_HOST_RSA_KEY_FILE:-./secrets/ssh_host_rsa_key}
+  ssh_host_ed25519_key:
+    file: ${SSH_HOST_ED25519_KEY_FILE:-./secrets/ssh_host_ed25519_key}
+  ssh_host_rsa_public_key:
+    file: ${SSH_HOST_RSA_PUBLIC_KEY_FILE:-./secrets/ssh_host_rsa_key.pub}
+  ftp_passwords:
+    file: ${FTP_PASSWORDS_FILE:-./secrets/ftp_passwords.json}
+  enrollment_key:
+    file: ${ENROLLMENT_KEY_FILE:-./secrets/enrollment.key}
+
+volumes:
+  router-config:
+    driver: local
+  ftp-auth-config:
+    driver: local
+  provisioning-acks:
+    driver: local
+  provisioner-admin:
+    driver: local
+  provisioner-public:
+    driver: local
+  incoming-data:
+    driver: local
+  ftp-data:
+    driver: local
+  receipt-index:
+    driver: local
+  enrollment-data:
+    driver: local
+  archive-socket:
+    driver: local

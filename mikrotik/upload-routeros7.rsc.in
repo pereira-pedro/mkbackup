@@ -1,0 +1,37 @@
+# CAPABILITY-GATED RouterOS 7 template, not a universal RouterOS 6/7 script.
+# Run/import under the SAME owner used by the backup scheduler and imported key.
+# Preserve existing backup generation; call with local file + unique remote name:
+# :global mkbackupUpload; $mkbackupUpload "flash/site.backup" "site-20261020-010000-unique.backup"
+# The source backup is intentionally never deleted here.
+:global mkbackupUpload do={
+    :local sourceFile $1
+    :local remoteName $2
+    :if (([:len $remoteName] > 128) || !($remoteName ~ "^[A-Za-z0-9][A-Za-z0-9._-]*\$")) do={
+        :error "mkbackup: invalid unique remote filename"
+    }
+    :local source [/file/find where name=$sourceFile]
+    :if ([:len $source] != 1) do={ :error "mkbackup: source file not found" }
+    :local bytes [/file/get $source size]
+    :if (($bytes < 1) || ($bytes > @MAX_BYTES@)) do={ :error "mkbackup: backup size out of range" }
+    :local markerFile ($remoteName . ".done.json")
+    :local existing [/file/find where name=$markerFile]
+    :if ([:len $existing] > 0) do={ /file/remove $existing }
+    /file/add name=$markerFile type=file
+    /file/set [find where name=$markerFile] contents=("{\"version\":1,\"filename\":\"" . $remoteName . "\",\"size\":" . $bytes . "}")
+    :local success false
+    :for attempt from=1 to=3 do={
+        :if (!$success) do={
+            :do {
+                /tool/fetch url=("sftp://@HOST@/upload/" . $remoteName) port=@PORT@ user="@ROUTER@" upload=yes src-path=$sourceFile sftp-known-hosts-ignore=no
+                /tool/fetch url=("sftp://@HOST@/upload/" . $markerFile) port=@PORT@ user="@ROUTER@" upload=yes src-path=$markerFile sftp-known-hosts-ignore=no
+                :set success true
+            } on-error={
+                :log warning ("mkbackup: upload attempt " . $attempt . " failed; local backup retained")
+                :if ($attempt < 3) do={ :delay 5s }
+            }
+        }
+    }
+    :if (!$success) do={ :error "mkbackup: upload failed after 3 attempts; local files retained" }
+    /file/remove [find where name=$markerFile]
+    :log info ("mkbackup: uploaded " . $remoteName . "; archival confirmed separately by collector monitoring")
+}

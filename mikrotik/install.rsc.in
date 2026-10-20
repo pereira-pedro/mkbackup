@@ -1,0 +1,67 @@
+# Personalized credential-bearing installer. Do not share, export or retain this file.
+# Run only through /import after a certificate-validated HTTPS download.
+{
+    :local phase "preflight"
+    :local managed @MANAGED@
+    :local marker @MARKER@
+    :local keyCreated false
+    :local prefix ""
+    :if ([:len [/file find where name="flash"]] > 0) do={ :set prefix "flash/" }
+    :do {
+        :local version [/system resource get version]
+        @VERSION_CHECK@
+        :if ([/system resource get free-hdd-space] < 65536) do={ :error "insufficient storage" }
+        :local probe [/tool fetch url=(@BASE_URL@ . "/healthz") check-certificate=yes output=user as-value]
+        :if (($probe->"data") != "ok\n") do={ :error "HTTPS service unavailable" }
+        :set phase "ownership"
+        :foreach object in={"mkbackup-export";"mkbackup-state"} do={
+            :local item [/system script find where name=$object]
+            :if ([:len $item] > 0) do={
+                :local comment [/system script get $item comment]
+                :if (($object = "mkbackup-export") && ($comment != $managed)) do={ :error "unmanaged script name conflict" }
+                :if (($object = "mkbackup-state") && ([:pick $comment 0 [:len $marker]] != $marker)) do={ :error "unmanaged state name conflict" }
+                :if ([/system script get $item owner] != @JOB_OWNER@) do={ :error "script owner mismatch" }
+            }
+        }
+        :local existingSchedule [/system scheduler find where name="mkbackup-daily"]
+        :if ([:len $existingSchedule] > 0) do={
+            :if ([/system scheduler get $existingSchedule comment] != $managed) do={ :error "unmanaged scheduler name conflict" }
+            :if ([/system scheduler get $existingSchedule owner] != @JOB_OWNER@) do={ :error "scheduler owner mismatch" }
+        }
+        # A harmless temporary object establishes the actual importing user's identity.
+        :if ([:len [/system script find where name=@PROBE_NAME@]] > 0) do={ :error "owner probe name conflict" }
+        /system script add name=@PROBE_NAME@ source="" policy=read comment=$managed
+        :local actualOwner [/system script get [find where name=@PROBE_NAME@] owner]
+        /system script remove [find where name=@PROBE_NAME@]
+        :if ($actualOwner != @JOB_OWNER@) do={ :error "import as the configured job owner" }
+        :if (([:len [/file find where name=($prefix . "mkbackup-credentials.txt")]] > 0) && ([:len [/system script find where name="mkbackup-export"]] = 0)) do={ :error "unmanaged credential file conflict" }
+        :if ([:len $existingSchedule] > 0) do={ /system scheduler disable $existingSchedule }
+        :set phase "transport capabilities and credentials"
+        @CREDENTIALS@
+        :set phase "managed job installation"
+        :if ([:len [/system script find where name="mkbackup-state"]] = 0) do={
+            /system script add name="mkbackup-state" source="" comment=($marker . "0||confirmed") policy=read,write,ftp,test,sensitive
+        }
+        :if ([:len [/system script find where name="mkbackup-export"]] = 0) do={
+            /system script add name="mkbackup-export" source=@JOB_SOURCE@ comment=$managed policy=read,write,ftp,test,sensitive
+        } else={
+            /system script set [find where name="mkbackup-export"] source=@JOB_SOURCE@ policy=read,write,ftp,test,sensitive
+        }
+        :if ([:len $existingSchedule] = 0) do={
+            /system scheduler add name="mkbackup-daily" interval=1d start-time=@START_TIME@ on-event="/system script run mkbackup-export" disabled=yes policy=read,write,ftp,test,sensitive comment=$managed
+        } else={
+            /system scheduler set $existingSchedule disabled=yes interval=1d start-time=@START_TIME@ on-event="/system script run mkbackup-export" policy=read,write,ftp,test,sensitive
+        }
+        :set phase "initial export and archival confirmation"
+        /system script run mkbackup-export
+        /system scheduler enable [find where name="mkbackup-daily"]
+        :put "mkbackup: deployment complete; initial export archived; daily schedule enabled"
+    } on-error={
+        @CLEANUP@
+        /file remove [find where name="mkbackup-install.rsc"]
+        :log warning ("mkbackup: deployment stopped at " . $phase . "; existing unrelated jobs unchanged")
+        :error ("mkbackup: deployment stopped at " . $phase . "; see deployment recovery guide; never enable the schedule before archival confirmation")
+    }
+    @CLEANUP@
+    /file remove [find where name="mkbackup-install.rsc"]
+}

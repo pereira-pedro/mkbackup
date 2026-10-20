@@ -1,0 +1,44 @@
+Port 2222
+AddressFamily any
+HostKey /run/mkbackup/keys/ssh_host_rsa_key
+HostKey /run/mkbackup/keys/ssh_host_ed25519_key
+HostKeyAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
+PubkeyAcceptedAlgorithms rsa-sha2-512,rsa-sha2-256
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256,diffie-hellman-group16-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes128-ctr
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+UsePAM no
+PermitRootLogin no
+HostbasedAuthentication no
+IgnoreRhosts yes
+AuthorizedKeysFile /run/mkbackup/authorized_keys/%u
+StrictModes yes
+AllowGroups mkbackup-sftp-*
+ChrootDirectory /srv/sftp/%u
+Subsystem sftp internal-sftp
+# Pending data is untrusted. Archive storage is never mounted in this service.
+ForceCommand internal-sftp -d /upload -u 0077 -P read,remove,rename,posix-rename,rmdir,mkdir,symlink,hardlink,copy-data
+DisableForwarding yes
+AllowTcpForwarding no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+PermitTunnel no
+X11Forwarding no
+PermitTTY no
+PermitUserRC no
+MaxAuthTries 3
+MaxSessions 1
+LoginGraceTime 20
+MaxStartups 10:30:60
+PerSourceMaxStartups 3
+ClientAliveInterval 60
+ClientAliveCountMax 2
+LogLevel VERBOSE
+PrintMotd no
+PrintLastLog no
+PidFile /run/sshd.pid

@@ -1,0 +1,92 @@
+# Managed export job. State is persistent router configuration, not a global variable.
+:if ([:len [/system script job find where script="mkbackup-export"]] > 1) do={ :error "mkbackup: job already running" }
+# Capture the execution time once. Retry reading if midnight splits the clock reads.
+:local runDate [/system clock get date]
+:local runTime [/system clock get time]
+:local stableClock false
+:for sample from=1 to=3 do={
+    :if (!$stableClock) do={
+        :if ([/system clock get date] = $runDate) do={ :set stableClock true } else={
+            :set runDate [/system clock get date]
+            :set runTime [/system clock get time]
+        }
+    }
+}
+@TIMESTAMP_HELPER@
+:local stateId [/system script find where name="mkbackup-state"]
+:local marker @MARKER@
+:local raw [/system script get $stateId comment]
+:if ([:pick $raw 0 [:len $marker]] != $marker) do={ :error "mkbackup: unmanaged state" }
+:local splitOne [:find $raw "|" [:len $marker]]
+# RouterOS :find starts AFTER its start offset; adjacent delimiters are valid.
+:local splitTwo [:find $raw "|" $splitOne]
+:local lastStamp [:pick $raw [:len $marker] $splitOne]
+:local current [:pick $raw ($splitOne + 1) $splitTwo]
+:local phase [:pick $raw ($splitTwo + 1) [:len $raw]]
+# Accept old numeric counters during upgrade; pending filenames remain unchanged.
+:if (([:len $lastStamp] < 1) || ([:len $lastStamp] > 14) || !($lastStamp ~ "^[0-9]+\$")) do={ :error "mkbackup: invalid persistent timestamp" }
+:if (([:len $current] > 0) && !($current ~ @FILE_PATTERN@)) do={ :error "mkbackup: invalid state filename" }
+:local prefix ""
+:if ([:len [/file find where name="flash"]] > 0) do={ :set prefix "flash/" }
+:local credentials [/file get [find where name=($prefix . "mkbackup-credentials.txt")] contents]
+:if ([:len $credentials] != 88) do={ :error "mkbackup: invalid runtime credentials" }
+:local ftpPassword [:pick $credentials 0 43]
+:local statusToken [:pick $credentials 44 87]
+:if (!($statusToken ~ "^[A-Za-z0-9_-]+\$")) do={ :error "mkbackup: invalid status credential" }
+:if ($phase = "generating") do={ :error "mkbackup: interrupted export generation; inspect local file and deployment recovery guide" }
+:if (($phase != "confirmed") && ($phase != "pending")) do={ :error "mkbackup: invalid export state" }
+:if ($phase = "confirmed") do={
+    :if (!$stableClock) do={ :error "mkbackup: clock changed during timestamp capture; retry" }
+    :local stamp [$formatTimestamp $runDate $runTime]
+    :if ([:tonum $stamp] <= [:tonum $lastStamp]) do={ :error "mkbackup: timestamp already used or clock moved backwards; retry after clock correction" }
+    :local basename ("@ROUTER@-" . $stamp)
+    :local nextFile ($basename . ".rsc")
+    :if ([:len [/file find where name=($prefix . $nextFile)]] > 0) do={ :error "mkbackup: filename collision; refusing replacement" }
+    # Validate the new name before removing the previously confirmed local export.
+    :if ([:len $current] > 0) do={ /file remove [find where name=($prefix . $current)] }
+    :set lastStamp $stamp
+    :set current $nextFile
+    /system script set $stateId comment=($marker . $lastStamp . "|" . $current . "|generating")
+    @EXPORT@
+    :delay 1s
+    /system script set $stateId comment=($marker . $lastStamp . "|" . $current . "|pending")
+}
+:local source [/file find where name=($prefix . $current)]
+:if ([:len $source] != 1) do={ :error "mkbackup: pending local export missing; manual recovery required" }
+:local bytes [/file get $source size]
+:if (($bytes < 1) || ($bytes > @MAX_BYTES@)) do={ :error "mkbackup: export size outside account limit; local file retained" }
+:local markerBase ($prefix . "mkbackup-completion")
+:local markerFile ($markerBase . ".txt")
+/file print file=$markerBase
+:delay 1s
+:local markerId [/file find where name=$markerFile]
+/file set $markerId contents=("{\"version\":1,\"filename\":\"" . $current . "\",\"size\":" . $bytes . "}")
+:local uploaded false
+:for attempt from=1 to=3 do={
+    :if (!$uploaded) do={
+        :do {
+            @UPLOAD_PAYLOAD@
+            :if ([/file get $source size] != $bytes) do={ :error "source changed" }
+            @UPLOAD_MARKER@
+            :set uploaded true
+        } on-error={
+            :log warning ("mkbackup: transfer attempt " . $attempt . " failed; export retained")
+            :if ($attempt < 3) do={ :delay 5s }
+        }
+    }
+}
+/file remove [find where name=$markerFile]
+:if (!$uploaded) do={ :error "mkbackup: upload failed; pending export retained for next run" }
+:local confirmed false
+:for check from=1 to=15 do={
+    :if (!$confirmed) do={
+        :do {
+            :local result [/tool fetch url=(@BASE_URL@ . "/v1/receipts/" . $current) check-certificate=yes http-header-field=("Authorization: Bearer " . $statusToken) output=user as-value]
+            :if (($result->"data") = ("ARCHIVED " . $current . " " . $bytes . "\n")) do={ :set confirmed true }
+        } on-error={ :log warning "mkbackup: HTTPS archival confirmation unavailable" }
+        :if (!$confirmed) do={ :delay 2s }
+    }
+}
+:if (!$confirmed) do={ :error "mkbackup: uploaded; archival not confirmed; local export retained" }
+/system script set $stateId comment=($marker . $lastStamp . "|" . $current . "|confirmed")
+:log info ("mkbackup: archived " . $current . "; newest local export retained")

@@ -1,0 +1,12 @@
+# Only public runtime source enters the image; never Git history or key bundles.
+**
+!Dockerfile
+!docker-entrypoint.sh
+!sshd_config
+!vsftpd-mkbackup.conf
+!container/
+!container/*.py
+!container/pam-ftp
+!mikrotik/
+!mikrotik/*.rsc
+!mikrotik/*.rsc.in
